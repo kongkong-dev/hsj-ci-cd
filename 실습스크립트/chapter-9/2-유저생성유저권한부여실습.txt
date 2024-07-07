@@ -1,0 +1,51 @@
+* jenkins database 유저 관리
+  - Jenkins 관리 > Users > Create User
+    - 계정명: test1
+    - 패스워드 : test1pw
+    - 패스워드확인 : test1pw
+    - 이름 : test1
+    - 이메일주소 : test1@example.com
+  - 로그아웃후 로그인 확인
+
+* ldap 서버 구동 후 연동
+  - openldap example 띄우기
+
+    docker run --detach --hostname openldap \
+      --rm --name openldap \
+      --network practice \
+      --env LDAP_ADMIN_USERNAME=admin \
+      --env LDAP_ADMIN_PASSWORD=adminpw \
+      --env LDAP_USERS=user1,user2 \
+      --env LDAP_PASSWORDS=user1pw,user2pw \
+      bitnami/openldap:latest
+
+  - Jenkins 관리 > Security > Security Realm > LDAP
+    - 서버 : openldap:1389
+    - Advanced Server Configuration
+      - root DN : dc=example,dc=org
+      - Manager DN : cn=admin,dc=example,dc=org
+      - Manager Password : adminpw
+    - Test LDAP Setting 클릭
+      - User: user1
+      - Password : user1pw
+      - Test!!
+  - 저장
+  - user1 / user1pw 로 로그인
+  - Dashboard > 사람 확인
+
+* Project-based Matrix Authorization Strategy 설정
+  - Jenkins 관리 > Security > Authorization > Project-based Matrix Authorization Strategy
+    - Add groups : readers
+      - Overall Read 권한 부여
+      - Job/Read 권한 부여
+    - Add user : user1
+      - Overall Administer 권한 부여
+    - 저장
+  - 기존 pipeline 중 하나로 이동 > Configuration 으로 이동
+    - concurrent-build 를 예로 사용
+    - Enable project-based security 체크
+      - Add user : user2
+        - 모든 권한 선택
+      - 저장
+  - 로그아웃후 user2로 로그인
+    - 위에서 설정한 pipeline 만 빌드 할 수 있음을 확인

@@ -1,0 +1,25 @@
+* 기존 방식에서 정지가 있음을 확인
+
+* cicd 컨테이너로 이동
+
+    docker exec -it cicd bash
+
+    cd ~/fastcampus-jenkins
+
+    # deploy 파일 변경
+    cp 3-deploy-with-rolling-update.sh 3-deploy.sh
+
+* 롤링 코드 업데이트 확인
+  - health 체크 관련 코드 확인
+    - https://github.com/junoyoon/fastcampus-jenkins/blob/main/projects/spring-app/src/main/kotlin/com/fastcampus/demo/controller/DemoController.kt
+  - deploy.sh 확인
+
+* github 에 변경을 일으키고 잘 감지하여 무정지 배포하는지 확인
+  - 0-cron.sh 실행
+  - github 에 변경 생성하여 main 에 바로 커밋
+  - 빌드 확인
+
+* 불필요한 docker 제거 - server_1 제외하고 모두 삭제
+  docker rm -f haproxy
+  docker rm -f server_2
+  docker rm -f cicd

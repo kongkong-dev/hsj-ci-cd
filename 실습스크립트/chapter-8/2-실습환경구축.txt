@@ -1,0 +1,218 @@
+* develop 브랜치 준비
+  - develop 브랜치 push
+    git clone git@github.com:[각자의github계정]/fastcampus-jenkins.git
+    git checkout -b develop
+    git push --set-upstream origin develop
+
+  - github 상의 디폴트 브랜치를 develop 으로 변경
+    - https://github.com/[각자의github계정]/fastcampus-jenkins/settings
+    - Default Branch : develop 으로 변경
+
+* EC2 인스턴스 설치
+  - https://ap-northeast-2.console.aws.amazon.com/ec2/home?region=ap-northeast-2#LaunchInstances:
+  - 2대를 다음 설정으로 생성
+    - 인스턴스명 : jenkins
+    - AMI : Amazon Linux
+    - 인스턴스 타입 : 최소 t2.medium
+    - Public IP
+    - 키페어 : fastcampus-jenkins
+    - 보안그룹
+      - TCP 22, 8080 을 모든 IP 에서 허용
+    - 디스크 용량 : 20G <== 주의 반드시 용량이 커야함
+    - 이후 생성된 서버명을 각각 jenkins-controller / jenkins-agent-k8s  으로 변경
+
+  - 1~5대를 다음 설정으로 생성
+    - 인스턴스명 : jenkins-target
+    - AMI : Amazon Linux
+    - 인스턴스 타입 : 최소 t2.small
+    - Public IP
+    - 키페어 : fastcampus-jenkins
+    - 보안그룹
+      - TCP 22, 8080 을 모든 IP 에서 허용
+    - 이후 생성된 서버명을 각각 다음으로 변경 (5개가 않될 경우에는 여러 phase 의 배포가 같은 서버로 배포될 수 있음을 감안)
+      - jenkins-target-pr
+      - jenkins-target-dev
+      - jenkins-target-qa
+      - jenkins-target-stage
+      - jenkins-target-prod
+      로 변경
+
+
+************************************************************************
+* jenkins-controller 서버 설정
+
+  - docker 설치
+
+    sudo yum update; sudo yum install -y docker
+    sudo usermod -a -G docker ec2-user
+    sudo systemctl enable docker.service; sudo systemctl start docker.service;
+    newgrp docker
+
+  - jenkins container 시작
+    docker volume create jenkins # JENKINS_HOME 보관용
+    docker volume create jenkins_backup # 백업파일 보관용
+    docker run -d --name jenkins \
+              --restart=on-failure \
+              -e TZ=Asia/Seoul \
+              -p 8080:8080 \
+              -v jenkins:/var/jenkins_home  \
+              -v jenkins_backup:/var/jenkins_backup  \
+              jenkins/jenkins:lts-jdk17
+
+  - jenkins container 시작
+    - 접근주소 : **여기에 기록해 두세요**
+
+    - 초기 패스워드 입력
+      docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+    - Suggested Plugin 설치
+    - 시간이 오래 걸리므로, 설치중 agent 설정
+
+************************************************************************
+* jenkins-agent-k8s 서버 설정
+  - docker 설치
+
+    sudo yum update; sudo yum install -y docker
+    sudo usermod -a -G docker ec2-user
+    sudo systemctl enable docker.service; sudo systemctl start docker.service;
+    newgrp docker
+
+  - kubectl & kind 설치
+
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.27.1/2023-04-19/bin/linux/amd64/kubectl
+chmod +x ./kubectl
+sudo mv ./kubectl /usr/local/bin/kubectl
+[ $(uname -m) = x86_64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+
+   - kind 설정
+
+# kind 설정 파일 작성 / k8s 클러스터 생성
+cat > jenkins-config.yaml << EOF
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+ apiServerAddress: "0.0.0.0"
+ apiServerPort: 8080
+nodes: # worker 가 1개인 k8s 구성
+- role: control-plane
+- role: worker
+EOF
+
+# 클러스터 생성
+kind create cluster --config jenkins-config.yaml
+
+# 서비스 account 생성 / jenkins account 에 admin 권한 부여 /  접근 토큰 생성
+kubectl create serviceaccount jenkins
+kubectl create rolebinding jenkins-admin-binding --clusterrole=admin --serviceaccount=default:jenkins
+kubectl create  -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-secret
+  annotations:
+    kubernetes.io/service-account.name: jenkins
+type: kubernetes.io/service-account-token
+EOF
+
+# 토큰 확인 및 복사
+kubectl describe secret jenkins-secret
+
+Token : **여기에 기록해 두세요**
+
+************************************************************************
+* jenkins-target-* 서버 설정 (모든 서버에 적용 필요)
+
+ - docker 설치
+
+    sudo yum update; sudo yum install -y docker
+    sudo usermod -a -G docker ec2-user
+    sudo systemctl enable docker.service; sudo systemctl start docker.service;
+    newgrp docker
+
+
+    docker network create server
+    # server 컨테이너 2대 띄우기
+    docker run -d --rm --hostname server1 --network server --name server1 azul/zulu-openjdk-centos:17-latest sleep 9999999999999
+    docker run -d --rm --hostname server2 --network server --name server2 azul/zulu-openjdk-centos:17-latest sleep 9999999999999
+    mkdir ~/haproxy; cd ~/haproxy
+    curl -Ol "https://raw.githubusercontent.com/junoyoon/fastcampus-jenkins/main/%EC%8B%A4%EC%8A%B5%EC%8A%A4%ED%81%AC%EB%A6%BD%ED%8A%B8/chapter-8/conf/haproxy.cfg"
+    docker run -d --name haproxy --restart always \
+         --network server -p 8080:8080 \
+         -v /home/ec2-user/haproxy:/usr/local/etc/haproxy \
+         haproxy
+
+************************************************************************
+* jenkins-controller 서버 마무리
+    - 설치과정 종료이후 admin 패스워드 설정
+    - 다음 플러그인 설치
+      - kubernetes
+      - copy artifact
+      - Pipeline: GitHub
+      - Jacoco
+      - Github Custom Notification Context SCM Behaviour
+      - Warnings Next Generation
+      - Multibranch Pipeline Inline Definition
+      - SonarQube Scanner (Optional)
+      - Slack (Optional)
+
+    - kubernetes 설정
+      - Jenkins 관리 > Nodes and Clouds > Clouds > Add Kubernetes
+        - Name : kubernetes
+        - Kubernetes Cloud details
+          - Kubernetes URL : https://[jenkins-agent-k8s-private-dns]:8080
+          - Disable https certificate check
+          - Credentials > Add > Secret text
+            - Secret : 생성한 token 기입
+            - ID: k8s-token
+            - Description : k8s-token
+            - 저장후, 선택
+          - Test Connection 실행
+          - Jenkins URL : http://[jenkins-controller-private-dns]:8080
+          - 저장
+
+************************************************************************
+* [optional] jenkins-tools 서버 설정
+
+  - docker 설치
+
+    sudo yum update; sudo yum install -y docker
+    sudo usermod -a -G docker ec2-user
+    sudo systemctl enable docker.service; sudo systemctl start docker.service;
+    newgrp docker
+
+  - sonarqube 설치
+    # 볼륨 생성
+    docker volume create --name sonarqube-data
+    docker volume create --name sonarqube-logs
+    docker volume create --name sonarqube-extensions
+    # SonarQube 컨테이너 실행
+    docker run --rm -d \
+      --name sonarqube \
+      -e TZ=Asia/Seoul \
+      -p 8080:9000 \
+      -v sonarqube-data:/opt/sonarqube/data \
+      -v sonarqube-logs:/opt/sonarqube/logs \
+      -v sonarqube-extensions:/opt/sonarqube/extensions \
+    sonarqube:lts-community
+
+    http://public-dns:8080 으로 접근후 admin / admin 으로 로그인
+
+  - build-cache-node 설치
+
+    docker volume create --name build-cache-node
+    docker run -d --rm \
+      --name build-cache-node \
+      --volume build-cache-node:/data \
+      --publish 8081:5071 \
+      gradle/build-cache-node:15.0 \
+      start
+
+    docker logs build-cache-node 로 id/pw 확인
+    http://public-dns:8081 으로 접근후, ui id / pw 변경 및 anonymous 접근 활성화
+
+ - 이후 Jenkins 설정은 다음 참고
+   - chapter4/9-SonarQube설치및연동실습.txt
+   - chapter6/6-빌드cache실습.txt
+
+************************************************************************

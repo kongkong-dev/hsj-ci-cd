@@ -1,0 +1,27 @@
+* Repository fork
+  - https://github.com/junoyoon/fastcampus-jenkins 를 본인의 계정으로 Fork
+
+* cicd container 로 접근후 해당 repo 를 clone
+
+    cd ~
+    docker exec -it cicd bash
+    git clone https://github.com/본인계정명/fastcampus-jenkins.git
+    cd fastcampus-jenkins
+    ls -al
+    // detached head 상태로 만듬
+    git checkout origin/main
+
+
+* 실습 스크립트 복사
+   cp 실습스크립트/chapter-1/script/* ./
+
+  - 코드 확인
+
+* cicd 프로세스 실행
+
+  ./1-cicd.sh
+
+* github 에 변경이후 잘 변경을 검출하는지 확인
+
+* 주기적 실행해 보기
+  - 0-cron.sh
